@@ -130,9 +130,22 @@
 
       <!-- Center Editor Area -->
       <main class="editor-area">
-        <!-- Open Tabs Bar -->
+        <!-- Open Tabs Bar & Editor Toolbar -->
         <div class="tabs-bar" id="tabs-bar">
           <div class="tab-scroll-container" id="tabs-container"></div>
+          <div class="editor-toolbar-actions">
+            <button id="btn-save-file" class="btn btn-save" title="Save file (Touch / Ctrl+S)" disabled aria-label="Save file">
+              <span class="save-icon">💾</span>
+              <span class="save-text">Save</span>
+            </button>
+            <div class="auto-save-wrapper" title="Automatically save changes 1.5s after typing stops">
+              <label class="auto-save-toggle">
+                <input type="checkbox" id="toggle-auto-save" checked />
+                <span class="toggle-slider"></span>
+              </label>
+              <span class="auto-save-label">Auto-save</span>
+            </div>
+          </div>
         </div>
 
         <!-- Code Editor Main View -->

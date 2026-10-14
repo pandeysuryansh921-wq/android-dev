@@ -12,6 +12,10 @@
     gitStatus: null,
     activeProcessId: null,
     ws: null,
+    saveState: 'saved', // 'saved' | 'unsaved' | 'saving' | 'failed'
+    autoSaveEnabled: localStorage.getItem('adh_autosave') !== 'false',
+    autoSaveDelay: 1500, // 1500ms default
+    autoSaveTimer: null,
   };
 
   // --- Auth & API Client ---
@@ -143,6 +147,13 @@
           <div class="project-card-path">${escapeHtml(p.path)}</div>
         `;
         card.addEventListener('click', async () => {
+          if (state.activeProject?.id === p.id) {
+            showTab('explorer');
+            return;
+          }
+          const canProceed = await confirmSaveUnsavedChanges('switching projects');
+          if (!canProceed) return;
+
           try {
             const opened = await api('/api/projects/open', { method: 'POST', body: { path: p.path } });
             state.activeProject = opened;
@@ -271,11 +282,16 @@
         <span class="tab-close" title="Close">✕</span>
       `;
 
-      tabEl.addEventListener('click', (e) => {
+      tabEl.addEventListener('click', async (e) => {
         if (e.target.classList.contains('tab-close')) {
           e.stopPropagation();
-          closeTab(tab.path);
+          await closeTab(tab.path);
         } else {
+          // If switching away from dirty tab and auto-save enabled, save previous tab immediately
+          const prevTab = state.openTabs.find(t => t.path === state.activeTabPath);
+          if (prevTab && prevTab.isDirty && state.autoSaveEnabled) {
+            await saveActiveFile();
+          }
           state.activeTabPath = tab.path;
           renderTabs();
           showEditorForTab(tab);
@@ -286,13 +302,17 @@
     }
   }
 
-  function closeTab(filePath) {
+  async function closeTab(filePath) {
     const idx = state.openTabs.findIndex(t => t.path === filePath);
     if (idx === -1) return;
 
     const tab = state.openTabs[idx];
-    if (tab.isDirty && !confirm(`"${tab.name}" has unsaved changes. Close anyway?`)) {
-      return;
+    if (tab.isDirty) {
+      const choice = confirm(`"${tab.name}" has unsaved changes.\n\nClick OK to save changes before closing, or Cancel to discard.`);
+      if (choice) {
+        const saved = await saveActiveFile();
+        if (!saved) return;
+      }
     }
 
     state.openTabs.splice(idx, 1);
@@ -309,6 +329,7 @@
       document.getElementById('editor-wrapper').classList.add('hidden');
       document.getElementById('empty-state').classList.remove('hidden');
       document.getElementById('status-file-info').textContent = 'No file open';
+      updateSaveStatus('saved');
     }
   }
 
@@ -322,7 +343,7 @@
     updateLineNumbers(tab.content);
 
     document.getElementById('status-file-info').textContent = tab.path;
-    updateSaveStatus(tab.isDirty);
+    updateSaveStatus(tab.isDirty ? 'unsaved' : 'saved');
   }
 
   function updateLineNumbers(code) {
@@ -335,20 +356,78 @@
     gutter.textContent = numbers;
   }
 
-  function updateSaveStatus(isDirty) {
+  function updateSaveStatus(status) {
+    if (typeof status === 'boolean') {
+      status = status ? 'unsaved' : 'saved';
+    }
+    state.saveState = status;
+
     const indicator = document.getElementById('save-status-indicator');
-    if (isDirty) {
-      indicator.textContent = '● Unsaved';
-      indicator.className = 'unsaved';
-    } else {
-      indicator.textContent = 'Saved';
-      indicator.className = 'saved';
+    const btnSave = document.getElementById('btn-save-file');
+    const autoSaveStatus = document.getElementById('auto-save-status');
+
+    if (!btnSave) return;
+
+    if (status === 'saving') {
+      btnSave.disabled = true;
+      btnSave.className = 'btn btn-save saving';
+      btnSave.innerHTML = '<span class="save-icon">⏳</span><span class="save-text">Saving...</span>';
+
+      if (indicator) {
+        indicator.textContent = '⏳ Saving...';
+        indicator.className = 'saving';
+      }
+      if (autoSaveStatus) autoSaveStatus.textContent = '';
+    } else if (status === 'unsaved') {
+      btnSave.disabled = false;
+      btnSave.className = 'btn btn-save unsaved';
+      btnSave.innerHTML = '<span class="save-icon">💾</span><span class="save-text">Save</span>';
+
+      if (indicator) {
+        indicator.textContent = '● Unsaved';
+        indicator.className = 'unsaved';
+      }
+      if (autoSaveStatus && state.autoSaveEnabled) {
+        autoSaveStatus.textContent = '(Auto-save in 1.5s)';
+      }
+    } else if (status === 'saved') {
+      btnSave.disabled = true;
+      btnSave.className = 'btn btn-save';
+      btnSave.innerHTML = '<span class="save-icon">💾</span><span class="save-text">Save</span>';
+
+      if (indicator) {
+        indicator.textContent = '✓ Saved';
+        indicator.className = 'saved';
+      }
+      if (autoSaveStatus) autoSaveStatus.textContent = '';
+    } else if (status === 'failed') {
+      btnSave.disabled = false;
+      btnSave.className = 'btn btn-save failed';
+      btnSave.innerHTML = '<span class="save-icon">⚠️</span><span class="save-text">Retry Save</span>';
+
+      if (indicator) {
+        indicator.textContent = '⚠️ Save Failed';
+        indicator.className = 'save-failed';
+      }
+      if (autoSaveStatus) autoSaveStatus.textContent = '';
     }
   }
 
   async function saveActiveFile() {
     const tab = state.openTabs.find(t => t.path === state.activeTabPath);
-    if (!tab) return;
+    if (!tab) return false;
+
+    // Clear any pending debounced auto-save timer
+    if (state.autoSaveTimer) {
+      clearTimeout(state.autoSaveTimer);
+      state.autoSaveTimer = null;
+    }
+
+    if (!tab.isDirty && state.saveState === 'saved') {
+      return true;
+    }
+
+    updateSaveStatus('saving');
 
     try {
       await api('/api/files/write', {
@@ -358,11 +437,48 @@
       tab.originalContent = tab.content;
       tab.isDirty = false;
       renderTabs();
-      updateSaveStatus(false);
+      updateSaveStatus('saved');
       refreshGitStatus();
+      return true;
     } catch (err) {
-      alert('Failed to save file: ' + err.message);
+      console.error('Save error:', err);
+      updateSaveStatus('failed');
+      alert(`Save Failed for "${tab.name}": ${err.message}`);
+      return false;
     }
+  }
+
+  async function saveDirtyTabs() {
+    const dirtyTabs = state.openTabs.filter(t => t.isDirty);
+    for (const tab of dirtyTabs) {
+      try {
+        await api('/api/files/write', {
+          method: 'POST',
+          body: { path: tab.path, content: tab.content }
+        });
+        tab.originalContent = tab.content;
+        tab.isDirty = false;
+      } catch (err) {
+        alert(`Failed to save ${tab.name}: ${err.message}`);
+        return false;
+      }
+    }
+    renderTabs();
+    updateSaveStatus('saved');
+    return true;
+  }
+
+  async function confirmSaveUnsavedChanges(actionName) {
+    const dirtyTabs = state.openTabs.filter(t => t.isDirty);
+    if (dirtyTabs.length === 0) {
+      return true;
+    }
+    const dirtyNames = dirtyTabs.map(t => t.name).join(', ');
+    const choice = confirm(`You have unsaved changes in:\n${dirtyNames}\n\nClick OK to save changes before ${actionName}, or Cancel to abort.`);
+    if (choice) {
+      return await saveDirtyTabs();
+    }
+    return false;
   }
 
   // --- Git Operations ---
@@ -418,6 +534,16 @@
     if (!state.activeProject) {
       alert('Please open a project first!');
       return;
+    }
+
+    // Save active file before running if it has unsaved changes
+    const activeTab = state.openTabs.find(t => t.path === state.activeTabPath);
+    if (activeTab && activeTab.isDirty) {
+      const saved = await saveActiveFile();
+      if (!saved) {
+        const proceed = confirm('Active file has unsaved changes and could not be saved. Run anyway with previous version on disk?');
+        if (!proceed) return;
+      }
     }
 
     const command = cmd || document.getElementById('runner-cmd-input').value.trim();
@@ -559,16 +685,66 @@
       }
     });
 
-    // Code Textarea input
+    // Code Textarea input with debounced auto-save
     const textarea = document.getElementById('code-textarea');
     textarea.addEventListener('input', () => {
       const tab = state.openTabs.find(t => t.path === state.activeTabPath);
       if (tab) {
         tab.content = textarea.value;
-        tab.isDirty = tab.content !== tab.originalContent;
+        const isDirty = tab.content !== tab.originalContent;
+        tab.isDirty = isDirty;
         renderTabs();
         updateLineNumbers(textarea.value);
-        updateSaveStatus(tab.isDirty);
+
+        if (isDirty) {
+          updateSaveStatus('unsaved');
+
+          if (state.autoSaveEnabled) {
+            if (state.autoSaveTimer) {
+              clearTimeout(state.autoSaveTimer);
+            }
+            state.autoSaveTimer = setTimeout(async () => {
+              if (tab.isDirty && state.activeTabPath === tab.path) {
+                await saveActiveFile();
+              }
+            }, state.autoSaveDelay);
+          }
+        } else {
+          if (state.autoSaveTimer) {
+            clearTimeout(state.autoSaveTimer);
+            state.autoSaveTimer = null;
+          }
+          updateSaveStatus('saved');
+        }
+      }
+    });
+
+    // Touchscreen Save Button
+    const btnSave = document.getElementById('btn-save-file');
+    if (btnSave) {
+      btnSave.addEventListener('click', () => {
+        saveActiveFile();
+      });
+    }
+
+    // Auto-save toggle
+    const toggleAutoSave = document.getElementById('toggle-auto-save');
+    if (toggleAutoSave) {
+      toggleAutoSave.checked = state.autoSaveEnabled;
+      toggleAutoSave.addEventListener('change', (e) => {
+        state.autoSaveEnabled = e.target.checked;
+        localStorage.setItem('adh_autosave', String(state.autoSaveEnabled));
+        if (state.autoSaveEnabled && state.saveState === 'unsaved') {
+          saveActiveFile();
+        }
+      });
+    }
+
+    // Window beforeunload guard against accidental close of browser tab
+    window.addEventListener('beforeunload', (e) => {
+      if (state.openTabs.some(t => t.isDirty)) {
+        e.preventDefault();
+        e.returnValue = '';
       }
     });
 
@@ -753,6 +929,9 @@
         return;
       }
 
+      const canProceed = await confirmSaveUnsavedChanges('creating a new project');
+      if (!canProceed) return;
+
       try {
         const project = await api('/api/projects', {
           method: 'POST',
@@ -780,6 +959,9 @@
         alert('Please enter a Git repository URL.');
         return;
       }
+
+      const canProceed = await confirmSaveUnsavedChanges('cloning a repository');
+      if (!canProceed) return;
 
       modalClone.classList.add('hidden');
       alert('Cloning repository in background... this may take a moment.');
