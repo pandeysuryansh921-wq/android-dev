@@ -244,6 +244,7 @@ export class DevHubServer {
     if (pathname === '/api/projects/open' && method === 'POST') {
       const body = await this.parseJsonBody(req);
       if (!body.path) return this.sendError(res, 400, 'Project path is required');
+      this.security.assertProjectAuthorized(body.path);
       const project = await this.projectService.openProject(body.path);
       saveActiveProject(project.id);
       return this.sendJson(res, 200, project);
@@ -379,9 +380,13 @@ export class DevHubServer {
     if (pathname === '/api/runner/run' && method === 'POST') {
       const body = await this.parseJsonBody(req);
       if (!body.command) return this.sendError(res, 400, 'Command is required');
+      let safeCwd = projectRoot;
+      if (body.cwd) {
+        safeCwd = this.security.assertPathContained(body.cwd, projectRoot);
+      }
       const result = await this.runnerService.runCommand(projectRoot, {
         command: body.command,
-        cwd: body.cwd,
+        cwd: safeCwd,
         timeoutMs: body.timeoutMs,
       });
       return this.sendJson(res, 200, result);
@@ -416,18 +421,31 @@ export class DevHubServer {
 
   private serveStaticFile(reqPath: string, res: http.ServerResponse) {
     let filePath = reqPath === '/' ? 'index.html' : reqPath.replace(/^\//, '');
-    const fullPath = path.join(this.staticDir, filePath);
+    const resolvedPath = path.resolve(this.staticDir, filePath);
 
-    // Path traversal safety check for static files
-    if (!fullPath.startsWith(this.staticDir)) {
-      return this.sendError(res, 403, 'Forbidden');
-    }
+    let canonicalStatic = this.staticDir;
+    try {
+      if (fs.existsSync(this.staticDir)) {
+        canonicalStatic = fs.realpathSync(this.staticDir);
+      }
+    } catch {}
 
-    if (!fs.existsSync(fullPath)) {
+    const normalizedCanonicalStatic = canonicalStatic.endsWith(path.sep) ? canonicalStatic : canonicalStatic + path.sep;
+
+    if (!fs.existsSync(resolvedPath)) {
       return this.sendError(res, 404, 'Not Found');
     }
 
-    const ext = path.extname(fullPath).toLowerCase();
+    let canonicalFile = resolvedPath;
+    try {
+      canonicalFile = fs.realpathSync(resolvedPath);
+    } catch {}
+
+    if (canonicalFile !== canonicalStatic && !canonicalFile.startsWith(normalizedCanonicalStatic)) {
+      return this.sendError(res, 403, 'Forbidden');
+    }
+
+    const ext = path.extname(canonicalFile).toLowerCase();
     const mimeTypes: { [key: string]: string } = {
       '.html': 'text/html; charset=utf-8',
       '.js': 'application/javascript; charset=utf-8',
@@ -439,11 +457,14 @@ export class DevHubServer {
     };
 
     const contentType = mimeTypes[ext] || 'application/octet-stream';
-    const content = fs.readFileSync(fullPath);
+    const content = fs.readFileSync(canonicalFile);
 
     res.writeHead(200, {
       'Content-Type': contentType,
       'Cache-Control': 'no-cache',
+      'X-Content-Type-Options': 'nosniff',
+      'X-Frame-Options': 'DENY',
+      'Content-Security-Policy': "default-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss:;",
     });
     res.end(content);
   }

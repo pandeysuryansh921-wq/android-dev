@@ -117,9 +117,8 @@ export class ProjectService {
       throw new Error(`Specified path is not a directory: ${projectPath}`);
     }
 
-    if (!this.security.isSafeProjectDir(resolvedPath)) {
-      throw new Error(`Cannot open system-level directory as project: ${projectPath}`);
-    }
+    // Assert that the project path is authorized within allowed workspace boundaries
+    this.security.assertProjectAuthorized(resolvedPath);
 
     const isGit = fs.existsSync(path.join(resolvedPath, '.git'));
     let branch: string | undefined = undefined;

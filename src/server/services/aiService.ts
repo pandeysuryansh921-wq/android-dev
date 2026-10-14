@@ -4,6 +4,8 @@ import { AIAssistantMessage } from '../types.js';
 
 const execFileAsync = promisify(execFile);
 
+export type CLIExecutor = (file: string, args: string[], options: any) => Promise<{ stdout: string; stderr: string }>;
+
 export interface AIAssistantAdapter {
   id: string;
   name: string;
@@ -16,36 +18,45 @@ export interface AIAssistantAdapter {
 }
 
 /**
- * Antigravity CLI Adapter
- * Communicates with the official Antigravity CLI installed in the environment (e.g., Termux)
+ * Real Antigravity CLI Adapter
+ * Communicates directly with the official Google Antigravity CLI (`agy` or `antigravity`)
+ * using non-interactive print mode: `agy -p "<prompt>" --output-format text`.
+ *
+ * NOTE: Does NOT silently substitute canned fallback responses when the CLI fails or is missing.
  */
 export class AntigravityAdapter implements AIAssistantAdapter {
   public id = 'antigravity';
   public name = 'Antigravity CLI';
-  public description = 'Google Antigravity coding agent integration';
+  public description = 'Official Google Antigravity coding agent integration';
 
-  private cachedAvailability: boolean | null = null;
+  private executor: CLIExecutor;
+  private resolvedBin: string | null = null;
+
+  constructor(customExecutor?: CLIExecutor) {
+    this.executor = customExecutor || (execFileAsync as unknown as CLIExecutor);
+  }
 
   public async isAvailable(): Promise<boolean> {
-    if (this.cachedAvailability !== null) {
-      return this.cachedAvailability;
+    if (this.resolvedBin !== null) {
+      return true;
     }
 
-    try {
-      // Check if `antigravity` or `agy` is in PATH
-      await execFileAsync('antigravity', ['--version'], { timeout: 3000 });
-      this.cachedAvailability = true;
-      return true;
-    } catch {
+    // Check for official 'agy' first, then 'antigravity'
+    for (const bin of ['agy', 'antigravity']) {
       try {
-        await execFileAsync('agy', ['--version'], { timeout: 3000 });
-        this.cachedAvailability = true;
+        await this.executor(bin, ['--version'], { timeout: 3000 });
+        this.resolvedBin = bin;
         return true;
       } catch {
-        this.cachedAvailability = false;
-        return false;
+        // Try next binary
       }
     }
+
+    return false;
+  }
+
+  public getResolvedBinary(): string | null {
+    return this.resolvedBin;
   }
 
   public async chat(
@@ -54,62 +65,92 @@ export class AntigravityAdapter implements AIAssistantAdapter {
   ): Promise<string> {
     const isAvail = await this.isAvailable();
 
-    if (isAvail) {
-      // Assemble context for the CLI
-      let fullPrompt = prompt;
-      if (context?.activeFile && context?.fileContent) {
-        fullPrompt = `[Context File: ${context.activeFile}]\n\`\`\`\n${context.fileContent.slice(0, 4000)}\n\`\`\`\n\n${prompt}`;
-      }
-
-      try {
-        const bin = 'antigravity';
-        const { stdout } = await execFileAsync(bin, ['--prompt', fullPrompt], { timeout: 60000 });
-        return stdout.trim();
-      } catch (err: any) {
-        return `Antigravity CLI execution error: ${err.message || err}`;
-      }
+    if (!isAvail) {
+      throw new Error(
+        "Antigravity CLI ('agy' or 'antigravity') was not found in PATH. " +
+        "Please ensure the Antigravity CLI is installed and configured in your Termux or system environment."
+      );
     }
 
-    // Smart Local Assistant Fallback when CLI is not yet installed in local environment
-    return this.generateSmartLocalResponse(prompt, context);
+    const bin = this.resolvedBin || 'agy';
+
+    // Assemble structured prompt context for the agent
+    let fullPrompt = prompt;
+    if (context?.activeFile && context?.fileContent) {
+      fullPrompt = `[Context File: ${context.activeFile}]\n\`\`\`\n${context.fileContent.slice(0, 8000)}\n\`\`\`\n\n${prompt}`;
+    }
+    if (context?.gitDiff) {
+      fullPrompt = `[Unstaged Git Diff]\n\`\`\`diff\n${context.gitDiff.slice(0, 4000)}\n\`\`\`\n\n${fullPrompt}`;
+    }
+
+    // Exact invocation arguments for Antigravity CLI non-interactive mode:
+    // agy -p "<prompt>" --output-format text
+    const cliArgs = ['-p', fullPrompt, '--output-format', 'text'];
+
+    try {
+      const { stdout, stderr } = await this.executor(bin, cliArgs, {
+        timeout: 120000,
+        maxBuffer: 10 * 1024 * 1024,
+      });
+
+      const trimmedStdout = stdout ? stdout.trim() : '';
+      if (trimmedStdout) {
+        return trimmedStdout;
+      }
+
+      // If stdout was empty but stderr had output, return stderr diagnostics
+      if (stderr && stderr.trim()) {
+        return stderr.trim();
+      }
+
+      throw new Error('Antigravity CLI completed without output.');
+    } catch (err: any) {
+      const errorDetail = err.stderr ? err.stderr.trim() : (err.message || String(err));
+      throw new Error(`Antigravity CLI execution failed: ${errorDetail}`);
+    }
+  }
+}
+
+/**
+ * Explicit Offline Helper Adapter (Clearly distinguished from live Antigravity CLI)
+ * Only used if explicitly chosen by user for offline template generation.
+ */
+export class OfflineHelperAdapter implements AIAssistantAdapter {
+  public id = 'offline-helper';
+  public name = 'Offline Template Helper';
+  public description = 'Local rule-based templates for offline review and structure inspection';
+
+  public async isAvailable(): Promise<boolean> {
+    return true;
   }
 
-  private generateSmartLocalResponse(
+  public async chat(
     prompt: string,
     context?: { activeFile?: string; fileContent?: string; gitStatus?: string; gitDiff?: string }
-  ): string {
+  ): Promise<string> {
     const lower = prompt.toLowerCase();
 
-    if (lower.includes('explain') || lower.includes('what does this do')) {
+    if (lower.includes('explain')) {
       if (!context?.fileContent) {
-        return 'Please open a file in the editor first so I can explain its implementation and architecture.';
+        return 'Offline Template Helper: Please open a file in the editor first.';
       }
       const lines = context.fileContent.split('\n');
-      return `### Code Explanation for \`${context.activeFile || 'current file'}\`\n\n` +
+      return `### [Offline Analysis] Structure for \`${context.activeFile || 'current file'}\`\n\n` +
         `- **Total lines:** ${lines.length}\n` +
         `- **File type:** ${context.activeFile ? context.activeFile.split('.').pop() : 'unknown'}\n` +
-        `- **Overview:** This file defines core logic for your project.\n\n` +
-        `> **Tip:** You have Antigravity CLI configured on your tablet. When running inside Termux with \`antigravity\`, full agentic completions are seamlessly active!`;
+        `- **Mode:** Offline Template Helper (Connect Antigravity CLI for full generative AI analysis).`;
     }
 
-    if (lower.includes('review') || lower.includes('diff') || lower.includes('git')) {
+    if (lower.includes('diff') || lower.includes('review')) {
       if (context?.gitDiff) {
-        return `### Git Diff Review\n\n\`\`\`diff\n${context.gitDiff.slice(0, 1000)}\n\`\`\`\n\n` +
-          `**Analysis:** Changes look clean. Ensure unit tests are run before committing.`;
+        return `### [Offline Analysis] Git Diff Review\n\n\`\`\`diff\n${context.gitDiff.slice(0, 1000)}\n\`\`\`\n\n` +
+          `**Note:** Unstaged changes detected. Verify automated tests pass before committing.`;
       }
-      return 'No active unstaged git changes found. Make an edit to a file and check the Git panel!';
+      return 'Offline Template Helper: No unstaged git diff provided.';
     }
 
-    if (lower.includes('test') || lower.includes('run')) {
-      return 'You can execute unit tests and scripts right now using the **Runner** panel below. Try running `npm test` or `node index.js`.';
-    }
-
-    return `### Android Dev Hub Assistant\n\n` +
-      `Received query: "${prompt}"\n\n` +
-      `**System Status:** Running locally on your device.\n` +
-      `- Active File: \`${context?.activeFile || 'None'}\`\n` +
-      `- Environment: Android-first local development runtime.\n\n` +
-      `To trigger full multi-step AI editing on your tablet, you can also run \`antigravity\` in Termux or connect a remote model endpoint.`;
+    return `### Offline Template Helper\n\nPrompt: "${prompt}"\n\n` +
+      `You are currently using the Offline Template Helper. To run real AI reasoning, switch to the Antigravity CLI adapter with 'agy' active in Termux.`;
   }
 }
 
@@ -118,9 +159,12 @@ export class AIService {
   private defaultAdapterId = 'antigravity';
   private history: AIAssistantMessage[] = [];
 
-  constructor() {
-    const antigravity = new AntigravityAdapter();
+  constructor(antigravityAdapter?: AntigravityAdapter) {
+    const antigravity = antigravityAdapter || new AntigravityAdapter();
+    const offlineHelper = new OfflineHelperAdapter();
+
     this.adapters.set(antigravity.id, antigravity);
+    this.adapters.set(offlineHelper.id, offlineHelper);
   }
 
   public registerAdapter(adapter: AIAssistantAdapter): void {
@@ -147,32 +191,47 @@ export class AIService {
     context?: { activeFile?: string; fileContent?: string; gitStatus?: string; gitDiff?: string }
   ): Promise<{ response: string; adapterUsed: string }> {
     const chosenId = adapterId || this.defaultAdapterId;
-    const adapter = this.adapters.get(chosenId) || this.adapters.get('antigravity');
+    const adapter = this.adapters.get(chosenId);
 
     if (!adapter) {
       throw new Error(`AI Adapter '${chosenId}' not found.`);
     }
 
-    // Save user message
+    // Save user message to history
     this.history.push({
       role: 'user',
       content: prompt,
       timestamp: Date.now(),
     });
 
-    const response = await adapter.chat(prompt, context);
+    try {
+      const response = await adapter.chat(prompt, context);
 
-    // Save assistant message
-    this.history.push({
-      role: 'assistant',
-      content: response,
-      timestamp: Date.now(),
-    });
+      // Save assistant message to history
+      this.history.push({
+        role: 'assistant',
+        content: response,
+        timestamp: Date.now(),
+      });
 
-    return {
-      response,
-      adapterUsed: adapter.name,
-    };
+      return {
+        response,
+        adapterUsed: adapter.name,
+      };
+    } catch (err: any) {
+      const errorMessage = err.message || String(err);
+
+      this.history.push({
+        role: 'assistant',
+        content: `⚠️ ${errorMessage}`,
+        timestamp: Date.now(),
+      });
+
+      return {
+        response: `⚠️ ${errorMessage}`,
+        adapterUsed: adapter.name,
+      };
+    }
   }
 
   public getHistory(): AIAssistantMessage[] {

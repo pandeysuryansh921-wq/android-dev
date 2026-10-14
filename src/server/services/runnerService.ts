@@ -1,5 +1,7 @@
 import { spawn, ChildProcess } from 'child_process';
 import { EventEmitter } from 'events';
+import * as fs from 'fs';
+import * as path from 'path';
 import * as crypto from 'crypto';
 import { RunCommandRequest, RunCommandResult } from '../types.js';
 
@@ -8,6 +10,82 @@ export interface ProcessEvent {
   type: 'stdout' | 'stderr' | 'exit' | 'error';
   data?: string;
   exitCode?: number | null;
+}
+
+/**
+ * Resolves the appropriate shell and execution arguments for the target operating system.
+ * Specifically handles Termux ARM64 on Android where /bin/sh does NOT exist at the system root.
+ */
+export function resolveShell(
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+  existsFn: (p: string) => boolean = fs.existsSync
+): { shell: string; args: (command: string) => string[] } {
+  // 1. Windows platforms
+  if (platform === 'win32') {
+    const comspec = env.COMSPEC || 'cmd.exe';
+    return {
+      shell: comspec,
+      args: (command: string) => ['/d', '/s', '/c', command],
+    };
+  }
+
+  // 2. Explicit SHELL environment variable if verified to exist
+  if (env.SHELL && existsFn(env.SHELL)) {
+    return {
+      shell: env.SHELL,
+      args: (command: string) => ['-c', command],
+    };
+  }
+
+  // 3. Termux ARM64 environment with PREFIX defined ($PREFIX/bin/sh or $PREFIX/bin/bash)
+  if (env.PREFIX) {
+    const termuxSh = path.join(env.PREFIX, 'bin', 'sh');
+    if (existsFn(termuxSh)) {
+      return {
+        shell: termuxSh,
+        args: (command: string) => ['-c', command],
+      };
+    }
+    const termuxBash = path.join(env.PREFIX, 'bin', 'bash');
+    if (existsFn(termuxBash)) {
+      return {
+        shell: termuxBash,
+        args: (command: string) => ['-c', command],
+      };
+    }
+  }
+
+  // 4. Standard Termux path (/data/data/com.termux/files/usr/bin/sh)
+  const standardTermuxSh = '/data/data/com.termux/files/usr/bin/sh';
+  if (existsFn(standardTermuxSh)) {
+    return {
+      shell: standardTermuxSh,
+      args: (command: string) => ['-c', command],
+    };
+  }
+
+  // 5. Android system shell (/system/bin/sh)
+  if (existsFn('/system/bin/sh')) {
+    return {
+      shell: '/system/bin/sh',
+      args: (command: string) => ['-c', command],
+    };
+  }
+
+  // 6. Standard Unix / Linux / macOS shell
+  if (existsFn('/bin/sh')) {
+    return {
+      shell: '/bin/sh',
+      args: (command: string) => ['-c', command],
+    };
+  }
+
+  // 7. General fallback
+  return {
+    shell: 'sh',
+    args: (command: string) => ['-c', command],
+  };
 }
 
 export class RunnerService extends EventEmitter {
@@ -28,13 +106,25 @@ export class RunnerService extends EventEmitter {
 
       const cwd = req.cwd ? req.cwd : projectRoot;
 
+      // Verify that cwd exists and is a directory
+      if (!fs.existsSync(cwd) || !fs.statSync(cwd).isDirectory()) {
+        const result: RunCommandResult = {
+          id,
+          command: req.command,
+          exitCode: 1,
+          stdout: '',
+          stderr: `Working directory does not exist or is not a directory: ${cwd}`,
+          durationMs: 0,
+        };
+        return resolve(result);
+      }
+
       let stdoutAccumulator = '';
       let stderrAccumulator = '';
 
-      // Determine shell command based on platform
-      const isWindows = process.platform === 'win32';
-      const shell = isWindows ? 'cmd.exe' : '/bin/sh';
-      const shellArgs = isWindows ? ['/d', '/s', '/c', req.command] : ['-c', req.command];
+      // Determine shell command based on platform and Termux environment
+      const { shell, args } = resolveShell();
+      const shellArgs = args(req.command);
 
       let child: ChildProcess;
       try {
@@ -52,7 +142,7 @@ export class RunnerService extends EventEmitter {
           command: req.command,
           exitCode: 1,
           stdout: '',
-          stderr: `Failed to spawn process: ${err.message}`,
+          stderr: `Failed to spawn process with shell '${shell}': ${err.message}`,
           durationMs: 0,
         };
         return resolve(result);

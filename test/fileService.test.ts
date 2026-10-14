@@ -20,7 +20,7 @@ after(() => {
 });
 
 test('FileService: Write and read file', async () => {
-  const guard = new SecurityGuard('token', testDir);
+  const guard = new SecurityGuard('test-token-12345678', testDir);
   const fileService = new FileService(guard);
 
   const testContent = 'console.log("Hello from Android Dev Hub");\n';
@@ -32,7 +32,7 @@ test('FileService: Write and read file', async () => {
 });
 
 test('FileService: List files and search', async () => {
-  const guard = new SecurityGuard('token', testDir);
+  const guard = new SecurityGuard('test-token-12345678', testDir);
   const fileService = new FileService(guard);
 
   await fileService.writeFile(testDir, 'README.md', '# Hello World\nSearchable text here.\n');
@@ -50,7 +50,7 @@ test('FileService: List files and search', async () => {
 });
 
 test('FileService: Delete file', async () => {
-  const guard = new SecurityGuard('token', testDir);
+  const guard = new SecurityGuard('test-token-12345678', testDir);
   const fileService = new FileService(guard);
 
   await fileService.writeFile(testDir, 'to-delete.txt', 'temporary');

@@ -27,7 +27,7 @@ after(() => {
 });
 
 test('ProjectService: Create and list projects', async () => {
-  const guard = new SecurityGuard('token', testWorkspace);
+  const guard = new SecurityGuard('test-token-12345678', testWorkspace);
   const projectService = new ProjectService(testWorkspace, guard, testConfigDir);
 
   const project = await projectService.createProject('sample-node-app', false, 'node');
