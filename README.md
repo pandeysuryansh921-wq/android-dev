@@ -27,9 +27,9 @@ On your Lenovo Idea Tab Pro (or any Android device running Termux):
 pkg update -y
 pkg install -y nodejs-lts git
 
-# 2. Clone or transfer android-dev-hub
-git clone https://github.com/your-username/android-dev-hub.git
-cd android-dev-hub
+# 2. Clone the repository
+git clone https://github.com/pandeysuryansh921-wq/android-dev.git
+cd android-dev
 
 # 3. Run the automated setup script
 chmod +x setup-termux.sh
