@@ -36,12 +36,16 @@ export class DevHubServer {
     this.runnerService = new RunnerService();
     this.aiService = new AIService();
 
-    // Default static directory (client assets)
-    this.staticDir = staticDir || path.resolve(__dirname, '../../src/web');
-    if (!fs.existsSync(this.staticDir)) {
-      // Fallback for production compiled structure
-      this.staticDir = path.resolve(__dirname, '../web');
-    }
+    // Resolve static directory (client assets)
+    const candidateDirs = [
+      staticDir,
+      path.resolve(__dirname, '../../../src/web'),
+      path.resolve(__dirname, '../../src/web'),
+      path.resolve(process.cwd(), 'src/web'),
+      path.resolve(__dirname, '../web'),
+    ].filter((dir): dir is string => typeof dir === 'string' && fs.existsSync(dir));
+
+    this.staticDir = candidateDirs[0] || path.resolve(process.cwd(), 'src/web');
 
     // Forward runner events to WebSocket clients
     this.runnerService.on('output', (event) => {
