@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Android Dev Hub</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="app" class="app-container">
+    <!-- Top Header Navigation -->
+    <header class="app-header">
+      <div class="header-left">
+        <button id="btn-toggle-sidebar" class="btn-icon" title="Toggle Sidebar">☰</button>
+        <div class="logo">
+          <span class="logo-icon">🤖</span>
+          <span class="logo-text">Android Dev Hub</span>
+          <span class="badge" id="env-badge">ARM64</span>
+        </div>
+        <div class="project-pill" id="project-pill">
+          <span class="pill-label">Project:</span>
+          <span id="active-project-name" class="pill-value">No Project Open</span>
+          <button id="btn-switch-project" class="btn-sm" title="Switch or Create Project">▾</button>
+        </div>
+      </div>
+
+      <div class="header-center">
+        <div id="git-status-bar" class="git-pill hidden">
+          <span class="git-icon">🌿</span>
+          <span id="git-branch" class="git-branch">main</span>
+          <span id="git-changes-count" class="badge-count">0</span>
+        </div>
+      </div>
+
+      <div class="header-right">
+        <button id="btn-quick-run" class="btn btn-primary btn-sm" title="Run active script">
+          ▶ Run
+        </button>
+        <button id="btn-toggle-runner" class="btn-icon" title="Toggle Command Runner">
+          ⚡ Output
+        </button>
+        <button id="btn-toggle-ai" class="btn btn-ai btn-sm" title="Toggle AI Assistant">
+          ✨ AI Agent
+        </button>
+        <div class="status-indicator online" id="status-dot" title="Server Connected"></div>
+      </div>
+    </header>
+
+    <!-- Main Workspace Layout -->
+    <div class="workspace-body">
+      <!-- Left Sidebar -->
+      <aside class="sidebar" id="sidebar">
+        <!-- Sidebar Navigation Tabs -->
+        <nav class="sidebar-nav">
+          <button class="nav-tab active" data-tab="explorer" title="File Explorer">📁 Files</button>
+          <button class="nav-tab" data-tab="git" title="Source Control">🌿 Git</button>
+          <button class="nav-tab" data-tab="projects" title="Projects & Repos">📦 Projects</button>
+          <button class="nav-tab" data-tab="search" title="Search Code">🔍 Search</button>
+        </nav>
+
+        <!-- Sidebar Content Panels -->
+        <div class="sidebar-content">
+          <!-- 1. File Explorer -->
+          <div id="tab-explorer" class="panel-tab active">
+            <div class="panel-header">
+              <span class="panel-title">EXPLORER</span>
+              <div class="panel-actions">
+                <button id="btn-new-file" class="btn-icon-sm" title="New File">+📄</button>
+                <button id="btn-new-folder" class="btn-icon-sm" title="New Folder">+📁</button>
+                <button id="btn-refresh-files" class="btn-icon-sm" title="Refresh Tree">🔄</button>
+              </div>
+            </div>
+            <div id="file-tree" class="file-tree">
+              <div class="empty-hint">Open or create a project to view files</div>
+            </div>
+          </div>
+
+          <!-- 2. Git Panel -->
+          <div id="tab-git" class="panel-tab">
+            <div class="panel-header">
+              <span class="panel-title">SOURCE CONTROL</span>
+              <button id="btn-refresh-git" class="btn-icon-sm" title="Refresh Git">🔄</button>
+            </div>
+            <div class="git-panel-content">
+              <div class="git-commit-box">
+                <textarea id="git-commit-msg" placeholder="Commit message..." rows="2"></textarea>
+                <div class="git-commit-actions">
+                  <button id="btn-git-stage-all" class="btn-sm" title="Stage all changes">Stage All</button>
+                  <button id="btn-git-commit" class="btn btn-primary btn-sm">Commit</button>
+                </div>
+              </div>
+              <div class="git-section-title">Changes (<span id="git-changes-num">0</span>)</div>
+              <div id="git-changes-list" class="git-file-list"></div>
+              <div id="git-diff-container" class="git-diff-view hidden">
+                <div class="diff-header">
+                  <span id="diff-file-title">File Diff</span>
+                  <button id="btn-close-diff" class="btn-icon-sm">✕</button>
+                </div>
+                <pre id="diff-code" class="diff-code"></pre>
+              </div>
+            </div>
+          </div>
+
+          <!-- 3. Projects Panel -->
+          <div id="tab-projects" class="panel-tab">
+            <div class="panel-header">
+              <span class="panel-title">PROJECTS</span>
+            </div>
+            <div class="projects-actions">
+              <button id="btn-modal-new-project" class="btn btn-block btn-sm">+ New Project</button>
+              <button id="btn-modal-clone" class="btn btn-secondary btn-block btn-sm">📥 Clone from GitHub</button>
+            </div>
+            <div class="git-section-title">Recent & Workspace Projects</div>
+            <div id="projects-list" class="projects-list"></div>
+          </div>
+
+          <!-- 4. Search Panel -->
+          <div id="tab-search" class="panel-tab">
+            <div class="panel-header">
+              <span class="panel-title">SEARCH IN FILES</span>
+            </div>
+            <div class="search-input-box">
+              <input type="text" id="search-input" placeholder="Search query..." />
+              <button id="btn-do-search" class="btn btn-sm">Search</button>
+            </div>
+            <div id="search-results" class="search-results"></div>
+          </div>
+        </div>
+      </aside>
+
+      <!-- Center Editor Area -->
+      <main class="editor-area">
+        <!-- Open Tabs Bar -->
+        <div class="tabs-bar" id="tabs-bar">
+          <div class="tab-scroll-container" id="tabs-container"></div>
+        </div>
+
+        <!-- Code Editor Main View -->
+        <div class="editor-container" id="editor-container">
+          <div class="empty-state" id="empty-state">
+            <div class="empty-icon">📱</div>
+            <h2>Android Dev Hub</h2>
+            <p>An AI-powered Android-first development workspace</p>
+            <div class="quick-actions">
+              <button id="btn-quick-new" class="btn btn-primary">Create New Project</button>
+              <button id="btn-quick-clone" class="btn btn-secondary">Clone Git Repository</button>
+            </div>
+            <div class="hints">
+              <p>💡 Tip: Use <kbd>Ctrl+S</kbd> to save files. Touch-friendly scrolling is enabled.</p>
+            </div>
+          </div>
+
+          <!-- Editor Wrapper -->
+          <div class="editor-wrapper hidden" id="editor-wrapper">
+            <div class="editor-gutter" id="editor-gutter"></div>
+            <textarea id="code-textarea" class="code-textarea" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
+          </div>
+        </div>
+
+        <!-- Status Bar -->
+        <footer class="editor-status-bar">
+          <div class="status-left">
+            <span id="status-file-info">No file open</span>
+            <span id="save-status-indicator" class="saved">Saved</span>
+          </div>
+          <div class="status-right">
+            <span id="cursor-position">Ln 1, Col 1</span>
+            <span id="status-encoding">UTF-8</span>
+          </div>
+        </footer>
+
+        <!-- Resizable Bottom Panel (Command Runner & Terminal) -->
+        <div class="bottom-panel" id="bottom-panel">
+          <div class="panel-drag-handle" id="panel-drag-handle"></div>
+          <div class="runner-header">
+            <div class="runner-title-group">
+              <span class="runner-title">⚡ Command Runner</span>
+              <span id="active-process-badge" class="badge-running hidden">Running...</span>
+            </div>
+            <div class="runner-controls">
+              <select id="runner-preset" class="select-sm">
+                <option value="custom">Custom Command</option>
+                <option value="npm test">npm test</option>
+                <option value="npm start">npm start</option>
+                <option value="node index.js">node index.js</option>
+                <option value="git status">git status</option>
+                <option value="git diff">git diff</option>
+              </select>
+              <input type="text" id="runner-cmd-input" placeholder="e.g. node index.js" value="node index.js" />
+              <button id="btn-execute-cmd" class="btn btn-primary btn-sm">Execute</button>
+              <button id="btn-kill-cmd" class="btn btn-danger btn-sm hidden">Kill</button>
+              <button id="btn-clear-runner" class="btn-sm" title="Clear Output">Clear</button>
+              <button id="btn-close-runner" class="btn-icon-sm" title="Close Panel">✕</button>
+            </div>
+          </div>
+          <div class="runner-terminal" id="runner-terminal">
+            <pre id="terminal-output" class="terminal-output"></pre>
+          </div>
+        </div>
+      </main>
+
+      <!-- Right AI Assistant Drawer -->
+      <aside class="ai-drawer hidden" id="ai-drawer">
+        <div class="ai-header">
+          <div class="ai-title">
+            <span>✨ AI Assistant</span>
+            <span class="badge" id="ai-adapter-badge">Antigravity</span>
+          </div>
+          <button id="btn-close-ai" class="btn-icon-sm">✕</button>
+        </div>
+        <div class="ai-quick-chips">
+          <button class="chip" data-prompt="Explain what the current file does and summarize its key functions.">💡 Explain Code</button>
+          <button class="chip" data-prompt="Review my current unstaged changes and suggest improvements or bug fixes.">🔍 Review Changes</button>
+          <button class="chip" data-prompt="Generate automated unit tests for this file.">🧪 Write Tests</button>
+          <button class="chip" data-prompt="How do I optimize performance and memory on Android ARM64?">🚀 Android Optimizations</button>
+        </div>
+        <div class="ai-chat-messages" id="ai-chat-messages">
+          <div class="ai-msg assistant">
+            <div class="msg-author">Antigravity Assistant</div>
+            <div class="msg-content">Hello! I am your Android Dev Hub AI assistant. I can explain code, review git changes, and run assisted workflows directly from your tablet.</div>
+          </div>
+        </div>
+        <div class="ai-input-box">
+          <textarea id="ai-input" placeholder="Ask AI coding assistant..." rows="2"></textarea>
+          <button id="btn-ai-send" class="btn btn-primary btn-sm">Send</button>
+        </div>
+      </aside>
+    </div>
+
+    <!-- Modals -->
+    <!-- 1. New Project Modal -->
+    <div id="modal-new-project" class="modal-overlay hidden">
+      <div class="modal-content">
+        <h3>🚀 Create New Project</h3>
+        <p>Set up a new development project in your workspace.</p>
+        <div class="form-group">
+          <label>Project Name:</label>
+          <input type="text" id="new-proj-name" placeholder="my-awesome-app" />
+        </div>
+        <div class="form-group">
+          <label>Template:</label>
+          <select id="new-proj-template">
+            <option value="node">Node.js / TypeScript App</option>
+            <option value="web">Web Application (HTML/JS)</option>
+            <option value="empty">Empty Folder</option>
+          </select>
+        </div>
+        <div class="form-group checkbox-group">
+          <input type="checkbox" id="new-proj-git" checked />
+          <label for="new-proj-git">Initialize Git repository</label>
+        </div>
+        <div class="modal-actions">
+          <button id="btn-cancel-new-proj" class="btn btn-secondary">Cancel</button>
+          <button id="btn-confirm-new-proj" class="btn btn-primary">Create Project</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 2. Clone Git Repo Modal -->
+    <div id="modal-clone" class="modal-overlay hidden">
+      <div class="modal-content">
+        <h3>📥 Clone Repository</h3>
+        <p>Clone an open-source project from GitHub or any Git host.</p>
+        <div class="form-group">
+          <label>Repository URL:</label>
+          <input type="text" id="clone-repo-url" placeholder="https://github.com/username/repository.git" />
+        </div>
+        <div class="form-group">
+          <label>Folder Name (optional):</label>
+          <input type="text" id="clone-repo-name" placeholder="Leave empty for default" />
+        </div>
+        <div class="modal-actions">
+          <button id="btn-cancel-clone" class="btn btn-secondary">Cancel</button>
+          <button id="btn-confirm-clone" class="btn btn-primary">Clone Repository</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

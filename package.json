@@ -1,0 +1,35 @@
+{
+  "name": "android-dev-hub",
+  "version": "0.1.0",
+  "description": "An AI-powered Android-first development ecosystem for tablets, phones, and Termux",
+  "main": "dist/src/server/server.js",
+  "bin": {
+    "adh": "dist/bin/adh.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc -w",
+    "start": "node dist/bin/adh.js start",
+    "test": "node --test dist/test/**/*.test.js"
+  },
+  "keywords": [
+    "android",
+    "termux",
+    "ide",
+    "ai",
+    "arm64",
+    "developer-tools",
+    "local-first"
+  ],
+  "author": "Android Dev Hub Community",
+  "license": "MIT",
+  "type": "commonjs",
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.0",
+    "@types/ws": "^8.5.14",
+    "typescript": "^5.7.3"
+  }
+}
